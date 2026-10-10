@@ -1,0 +1,11 @@
+# Virtual environments (as a backup safeguard)
+venv/
+.venv/
+
+# Environment secrets
+.env
+
+# Python cache files
+__pycache__/
+*.pyc
+
