@@ -29,7 +29,41 @@ if not SECRET_KEY:
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+# FRONTEND CONNECTION SETTINGS STARTS
+# Permit local development requests to reach Django.
+ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
+
+# Allow React's local origin to read permitted cross-origin API responses.
+CORS_ALLOWED_ORIGINS = ["http://localhost:8080"]
+
+# Permit cookies on browser requests from the configured CORS origin.
+CORS_ALLOW_CREDENTIALS = True
+
+# Trust the React origin for Django's CSRF checks.
+CSRF_TRUSTED_ORIGINS = ["http://localhost:8080"]
+
+# Use the React development server when constructing verification links.
+FRONTEND_BASE_URL = os.getenv(
+    "FRONTEND_BASE_URL",
+    "http://localhost:8080",
+)
+
+
+# Require secure session cookies when DEBUG is disabled.
+SESSION_COOKIE_SECURE = not DEBUG
+
+# Require secure CSRF cookies when DEBUG is disabled.
+CSRF_COOKIE_SECURE = not DEBUG
+
+# Prevent JavaScript from reading the session cookie.
+SESSION_COOKIE_HTTPONLY = True
+
+# Use same-site cookie behavior for local development.
+SESSION_COOKIE_SAMESITE = "Lax"
+
+# Use same-site behavior for the CSRF cookie.
+CSRF_COOKIE_SAMESITE = "Lax"
+# FRONTEND CONNECTION SETTINGS ENDs
 
 
 # Application definition
