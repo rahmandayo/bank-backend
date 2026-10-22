@@ -10,6 +10,8 @@ from .views import (
     RegisterView,
     ResendVerificationView,
     VerifyEmailView,
+    PasswordResetRequestView,
+    PasswordResetConfirmView,
 )
 
 # Define the URL patterns owned by the users application.
@@ -42,4 +44,18 @@ urlpatterns = [
 
     # Return the authenticated customer's profile.
     path("me/", CurrentUserView.as_view(), name="auth-me"),
+
+    # Accept a password-reset request and send an email when eligible.
+    path(
+        "password/reset/",
+        PasswordResetRequestView.as_view(),
+        name="auth-password-reset",
+    ),
+
+    # Validate a reset token and set a new password.
+    path(
+        "password/reset/confirm/",
+        PasswordResetConfirmView.as_view(),
+        name="auth-password-reset-confirm",
+    ),
 ]

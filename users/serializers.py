@@ -182,3 +182,66 @@ class LoginSerializer(serializers.Serializer):
     def validate_email(self, value):
         # Return the normalized address.
         return value.strip().lower()
+
+
+'''for password reset, we need to create two serializers: 
+one for requesting a password reset and another for confirming the new password.
+ The PasswordResetRequestSerializer will accept an email address to identify the
+   account requesting a reset, while the PasswordResetConfirmSerializer will accept
+     the new password and its confirmation, ensuring they match and comply with Django's password validation rules.'''
+
+# Define the request fields accepted by the password-reset endpoint.
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    # Require an email address to identify the account requesting a reset.
+    email = serializers.EmailField()
+
+    # Normalize the submitted email address.
+    def validate_email(self, value):
+        # Remove surrounding whitespace and convert the address to lowercase.
+        return value.strip().lower()
+
+
+# Define the fields accepted when setting a new password.
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    # Accept the new password without returning it in API responses.
+    new_password = serializers.CharField(
+        write_only=True,
+        trim_whitespace=False,
+        style={"input_type": "password"},
+    )
+
+    # Require the customer to enter the new password twice.
+    password_confirm = serializers.CharField(
+        write_only=True,
+        trim_whitespace=False,
+        style={"input_type": "password"},
+    )
+
+    # Validate matching passwords and Django's configured password policy.
+    def validate(self, attrs):
+        # Check that both password entries match.
+        if attrs["new_password"] != attrs["password_confirm"]:
+            # Return the error against the confirmation field.
+            raise serializers.ValidationError(
+                {"password_confirm": "The passwords do not match."}
+            )
+
+        # Retrieve the user resolved and validated by the API view.
+        user = self.context.get("user")
+
+        # Apply Django's configured password validators to the new password.
+        try:
+            # Check minimum length, common passwords, similarity, and other configured rules.
+            validate_password(attrs["new_password"], user=user)
+
+        # Catch Django's password-validation errors.
+        except DjangoValidationError as error:
+            # Return readable field-level validation errors.
+            raise serializers.ValidationError(
+                {"new_password": list(error.messages)}
+            ) from error
+
+        # Return the validated password values.
+        return attrs

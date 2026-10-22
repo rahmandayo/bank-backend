@@ -35,6 +35,19 @@ from django.utils.decorators import method_decorator
 # Import CSRF decorators for browser-facing POST endpoints.
 from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
 
+# Import Django's token generator for secure password-reset links.
+from django.contrib.auth.tokens import default_token_generator
+
+# Import the functions used to encode and decode user identifiers.
+from django.utils.encoding import force_bytes, force_str
+
+# Import URL-safe Base64 helpers for encoding user identifiers.
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+
+# Import DRF's anonymous-request throttling support.
+from rest_framework.throttling import AnonRateThrottle
+
+
 # Import Django REST Framework's permissions and API tools.
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -50,6 +63,8 @@ from .serializers import (
     LoginSerializer,
     RegisterSerializer,
     ResendVerificationSerializer,
+    PasswordResetRequestSerializer,
+    PasswordResetConfirmSerializer,
 )
 
 
@@ -492,3 +507,243 @@ class LogoutView(APIView):
 
         # Return no body after the session has been ended.
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# Limit repeated requests to send password-reset emails.
+class PasswordResetRequestThrottle(AnonRateThrottle):
+    # Use a dedicated rate-limit scope for reset-email requests.
+    scope = "password_reset_request"
+
+
+# Limit repeated attempts to submit password-reset tokens.
+class PasswordResetConfirmThrottle(AnonRateThrottle):
+    # Use a dedicated rate-limit scope for reset confirmations.
+    scope = "password_reset_confirm"
+
+
+# Request a password-reset email without revealing whether an account exists.
+@method_decorator(csrf_protect, name="dispatch")
+class PasswordResetRequestView(APIView):
+    # Allow password-reset requests without an existing login session.
+    authentication_classes = []
+
+    # Permit anonymous users to request password recovery.
+    permission_classes = [AllowAny]
+
+    # Apply the dedicated anonymous-request rate limit.
+    throttle_classes = [PasswordResetRequestThrottle]
+
+    # Handle requests to send a password-reset email.
+    def post(self, request):
+        # Validate the email address supplied by the customer.
+        serializer = PasswordResetRequestSerializer(data=request.data)
+
+        # Return field-validation errors for malformed requests.
+        serializer.is_valid(raise_exception=True)
+
+        # Read the normalized email address.
+        email = serializer.validated_data["email"]
+
+        # Find an active, verified account with a usable password.
+        user = User.objects.filter(
+            email__iexact=email,
+            is_active=True,
+            email_verified=True,
+        ).first()
+
+        # Send a reset email only when an eligible account exists.
+        if user is not None and user.has_usable_password():
+            # Encode the internal user ID so it can safely appear in the URL.
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+
+            # Generate Django's time-limited password-reset token.
+            token = default_token_generator.make_token(user)
+
+            # Read the frontend base URL configured for this environment.
+            frontend_base_url = getattr(
+                settings,
+                "FRONTEND_BASE_URL",
+                "http://localhost:8080",
+            ).rstrip("/")
+
+            # Encode the reset-link parameters for the URL.
+            query_string = urlencode(
+                {
+                    "uid": uid,
+                    "token": token,
+                }
+            )
+
+            # Construct the React password-reset link.
+            reset_url = (
+                f"{frontend_base_url}/reset-password?{query_string}"
+            )
+
+            # Define the password-reset email subject.
+            subject = "Reset your BMS password"
+
+            # Build a plain-text email containing the reset link.
+            message = (
+                f"Hello {user.first_name or user.username},\n\n"
+                "A password reset was requested for your BMS account.\n\n"
+                f"Open this link to set a new password:\n{reset_url}\n\n"
+                "If you did not request this reset, you can ignore this email."
+            )
+
+            # Send the message using Django's configured email backend.
+            try:
+                # Use the existing console backend during local development.
+                send_mail(
+                    subject,
+                    message,
+                    getattr(
+                        settings,
+                        "DEFAULT_FROM_EMAIL",
+                        "no-reply@bms.local",
+                    ),
+                    [user.email],
+                    fail_silently=False,
+                )
+
+            # Record a delivery failure without logging the reset token.
+            except Exception:
+                # Log only the internal user ID, not the message or reset link.
+                logger.exception(
+                    "Password-reset email delivery failed for user_id=%s",
+                    user.pk,
+                    # Print the original reset URL separately during local development.
+
+
+                )
+            if settings.DEBUG:
+                # Display a clear label for local testing.
+                print("\n[BMS LOCAL PASSWORD RESET LINK - DEBUG ONLY]")
+
+                # Print the original reset URL without email formatting.
+                print(reset_url)
+
+                # Display a closing marker.
+                print("[END LOCAL PASSWORD RESET LINK]\n")
+
+        # Return the same public response whether the account exists or not.
+        return Response(
+            {
+                "message": (
+                    "If an eligible account exists for that email, "
+                    "password-reset instructions have been sent."
+                )
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# Confirm a password reset using Django's token generator.
+@method_decorator(csrf_protect, name="dispatch")
+class PasswordResetConfirmView(APIView):
+    # Allow reset confirmation without an authenticated session.
+    authentication_classes = []
+
+    # Permit anonymous users to submit a reset token.
+    permission_classes = [AllowAny]
+
+    # Apply the dedicated anonymous-request rate limit.
+    throttle_classes = [PasswordResetConfirmThrottle]
+
+    # Handle requests to set a new password.
+    def post(self, request):
+        # Read the encoded user identifier from the request.
+        uid = request.data.get("uid")
+
+        # Read the reset token from the request.
+        token = request.data.get("token")
+
+        # Reject missing or non-string reset identifiers.
+        if not isinstance(uid, str) or not isinstance(token, str):
+            # Return a generic invalid-link response.
+            return Response(
+                {
+                    "code": "invalid_or_expired_token",
+                    "message": (
+                        "This password-reset link is invalid or has expired."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Decode the user identifier and retrieve the corresponding account.
+        try:
+            # Convert the URL-safe identifier back to the original user ID.
+            user_id = force_str(urlsafe_base64_decode(uid))
+
+            # Retrieve the user from the configured database.
+            user = User.objects.get(pk=user_id)
+
+        # Handle malformed identifiers and users that do not exist.
+        except (
+            TypeError,
+            ValueError,
+            OverflowError,
+            UnicodeDecodeError,
+            User.DoesNotExist,
+        ):
+            # Return the same generic error for invalid links.
+            return Response(
+                {
+                    "code": "invalid_or_expired_token",
+                    "message": (
+                        "This password-reset link is invalid or has expired."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Check whether the account is still eligible for password recovery.
+        if not user.is_active or not user.email_verified:
+            # Do not permit a disabled or unverified account to reset its password.
+            return Response(
+                {
+                    "code": "invalid_or_expired_token",
+                    "message": (
+                        "This password-reset link is invalid or has expired."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Verify the token, including its time limit and user-state binding.
+        if not default_token_generator.check_token(user, token):
+            # Reject invalid, expired, or already-invalidated tokens.
+            return Response(
+                {
+                    "code": "invalid_or_expired_token",
+                    "message": (
+                        "This password-reset link is invalid or has expired."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate the submitted new password and confirmation.
+        serializer = PasswordResetConfirmSerializer(
+            data=request.data,
+            context={"user": user},
+        )
+
+        # Return password-strength or confirmation errors when invalid.
+        serializer.is_valid(raise_exception=True)
+
+        # Hash the new password using Django's configured password hasher.
+        user.set_password(serializer.validated_data["new_password"])
+
+        # Save the new password hash and update the modification timestamp.
+        user.save(update_fields=["password", "updated_at"])
+
+        # Return success without automatically creating a new login session.
+        return Response(
+            {
+                "message": (
+                    "Password reset successfully. You can now sign in."
+                )
+            },
+            status=status.HTTP_200_OK,
+        )

@@ -182,6 +182,9 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 
+# Expire password-reset tokens after one hour (3600 seconds).
+PASSWORD_RESET_TIMEOUT = 60 * 60
+
 # Internationalization
 # https://docs.djangoproject.com/en/6.1/topics/i18n/
 
@@ -225,6 +228,22 @@ REST_FRAMEWORK = {
     ],
     # Use drf-spectacular to generate the OpenAPI schema.
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    # Define request limits for anonymous and authenticated API clients.
+    "DEFAULT_THROTTLE_RATES": {
+        # Limit general anonymous API traffic.
+        "anon": "100/hour",
+
+        # Limit general authenticated API traffic.
+        "user": "1000/hour",
+
+        # Limit requests that send password-reset emails.
+        "password_reset_request": "5/hour",
+
+        # Limit attempts to confirm password resets.
+        "password_reset_confirm": "10/hour",
+    },
+
+
 }
 
 # Configure the metadata used to generate API documentation.
