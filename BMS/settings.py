@@ -79,6 +79,8 @@ INSTALLED_APPS = [
     "corsheaders",  # Register CORS support.
     "drf_spectacular",  # Enable OpenAPI schema generation.
     "users",  # Register our custom user application.
+    "reference_data.apps.ReferenceDataConfig",
+    "accounts.apps.AccountsConfig",
     "api",  # Register the central API application.
 ]  # Finish the application configuration.
 
