@@ -83,7 +83,7 @@ class Account(models.Model):
 
         # Define database-level account constraints.
         constraints = [
-            # Prevent a closed account from having a NULL closure timestamp.
+            # Prevent closed accounts from having inconsistent timestamps.
             models.CheckConstraint(
                 condition=(
                     models.Q(status="CLOSED", closed_at__isnull=False)
@@ -94,9 +94,16 @@ class Account(models.Model):
                 ),
                 name="account_closed_timestamp_consistent",
             ),
+
+            # Allow only one current account per customer.
+            models.UniqueConstraint(
+                fields=["user"],
+                condition=models.Q(account_type="CURRENT"),
+                name="one_current_account_per_user",
+            ),
         ]
 
-        # Add indexes for common account lookup patterns.
+        # Define database indexes for common account queries.
         indexes = [
             models.Index(
                 fields=["user", "status"],
@@ -108,6 +115,6 @@ class Account(models.Model):
             ),
         ]
 
-    # Provide a readable representation of the account.
+        # Provide a readable representation of the account.
     def __str__(self):
         return f"{self.account_number} - {self.account_type}"
